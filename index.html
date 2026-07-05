@@ -1679,7 +1679,7 @@ function renderNormalGameBoard(cells, selectable){
 
 async function proposeName(index, name){
   try{
-    await sb.from('proposals').insert({
+    const { error: insertErr } = await sb.from('proposals').insert({
       room_id: currentRoom.id,
       question_id: currentRoom.current_question_id,
       player_id: currentPlayer.id,
@@ -1687,23 +1687,30 @@ async function proposeName(index, name){
       proposed_name: name,
       status: 'pending'
     });
+    if(insertErr) throw insertErr;
+
     await sb.from('game_log').insert({
       room_id: currentRoom.id, actor_player_id: currentPlayer.id,
       event_type: 'proposal_made', payload: { name }
     });
     await refreshGameView();
     await refreshGameFeed();
-  }catch(err){ console.error(err); alert('เกิดข้อผิดพลาด ลองใหม่อีกครั้ง'); }
+  }catch(err){
+    console.error('proposeName error', err);
+    alert('เสนอชื่อไม่สำเร็จ: ' + (err.message || 'ลองใหม่อีกครั้ง'));
+  }
 }
 
 async function passTurn(){
   try{
-    await sb.from('proposals').insert({
+    const { error: insertErr } = await sb.from('proposals').insert({
       room_id: currentRoom.id,
       question_id: currentRoom.current_question_id,
       player_id: currentPlayer.id,
       status: 'passed'
     });
+    if(insertErr) throw insertErr;
+
     await sb.from('game_log').insert({
       room_id: currentRoom.id, actor_player_id: currentPlayer.id,
       event_type: 'proposal_made', payload: { passed: true }
@@ -1711,22 +1718,28 @@ async function passTurn(){
     await advanceTurn();
     await refreshGameView();
     await refreshGameFeed();
-  }catch(err){ console.error(err); }
+  }catch(err){
+    console.error('passTurn error', err);
+    alert('กดผ่านไม่สำเร็จ: ' + (err.message || 'ลองใหม่อีกครั้ง'));
+  }
 }
 
 async function resolveProposal(proposal, approved){
   try{
-    await sb.from('proposals').update({
+    const { error: updateErr } = await sb.from('proposals').update({
       status: approved ? 'approved' : 'rejected',
       judge_verdict_by: currentPlayer.id,
       resolved_at: new Date().toISOString()
     }).eq('id', proposal.id);
+    if(updateErr) throw updateErr;
 
     if(approved){
-      const { data: board } = await sb.from('boards').select('*').eq('player_id', proposal.player_id).single();
+      const { data: board, error: boardFetchErr } = await sb.from('boards').select('*').eq('player_id', proposal.player_id).single();
+      if(boardFetchErr || !board) throw (boardFetchErr || new Error('ไม่พบกระดานของผู้เล่น'));
       const cells = board.cells;
       cells[proposal.board_cell_index].is_marked = true;
-      await sb.from('boards').update({ cells }).eq('id', board.id);
+      const { error: markErr } = await sb.from('boards').update({ cells }).eq('id', board.id);
+      if(markErr) throw markErr;
     }
 
     await sb.from('game_log').insert({
@@ -1738,7 +1751,10 @@ async function resolveProposal(proposal, approved){
     await advanceTurn();
     await refreshGameView();
     await refreshGameFeed();
-  }catch(err){ console.error(err); }
+  }catch(err){
+    console.error('resolveProposal error', err);
+    alert('ตัดสินไม่สำเร็จ: ' + (err.message || 'ลองใหม่อีกครั้ง'));
+  }
 }
 
 async function requestVAR(proposal, questionText){
@@ -1814,22 +1830,25 @@ async function requestVAR(proposal, questionText){
 }
 
 async function advanceTurn(){
-  const { data: acted } = await sb
+  const { data: acted, error: actedErr } = await sb
     .from('proposals').select('player_id')
     .eq('room_id', currentRoom.id).eq('question_id', currentRoom.current_question_id);
+  if(actedErr) throw actedErr;
   const actedIds = new Set((acted || []).map(a => a.player_id));
 
   const next = gameNormalPlayers.find(p => !actedIds.has(p.id));
 
   if(next){
-    await sb.from('rooms').update({ current_turn_player_id: next.id }).eq('id', currentRoom.id);
+    const { error } = await sb.from('rooms').update({ current_turn_player_id: next.id }).eq('id', currentRoom.id);
+    if(error) throw error;
     currentRoom.current_turn_player_id = next.id;
   }else{
     // ทุกคนเสนอ/ผ่านครบแล้ว รอบนี้จบ รอกรรมการหมุนวงล้อรอบถัดไป
-    await sb.from('rooms').update({
+    const { error } = await sb.from('rooms').update({
       current_question_id: null,
       current_turn_player_id: gameNormalPlayers[0] ? gameNormalPlayers[0].id : null
     }).eq('id', currentRoom.id);
+    if(error) throw error;
     currentRoom.current_question_id = null;
   }
 }
