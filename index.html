@@ -1498,29 +1498,34 @@ async function enterGamePhase(){
 }
 
 async function refreshGameView(){
-  const { data: wheel } = await sb.from('wheel_state').select('*').eq('room_id', currentRoom.id).single();
-  const drawnCount = wheel ? wheel.drawn_numbers.length : 0;
-  els.gameWheelProgress.textContent = `หมุนไปแล้ว ${drawnCount}/100`;
+  try{
+    const { data: wheel } = await sb.from('wheel_state').select('*').eq('room_id', currentRoom.id).single();
+    const drawnCount = wheel ? wheel.drawn_numbers.length : 0;
+    els.gameWheelProgress.textContent = `หมุนไปแล้ว ${drawnCount}/100`;
 
-  let question = null;
-  if(currentRoom.current_question_id){
-    const { data: q } = await sb.from('questions').select('*').eq('id', currentRoom.current_question_id).single();
-    question = q;
-  }
+    let question = null;
+    if(currentRoom.current_question_id){
+      const { data: q } = await sb.from('questions').select('*').eq('id', currentRoom.current_question_id).single();
+      question = q;
+    }
 
-  if(question){
-    els.gameQuestionBanner.innerHTML = `
-      <div class="question-number">โจทย์ข้อที่ ${question.number}</div>
-      <div class="question-text">${escapeHtml(question.question_text)}</div>
-    `;
-  }else{
-    els.gameQuestionBanner.innerHTML = `<div class="question-text" style="font-size:1.05rem;color:var(--text-dim);">รอกรรมการหมุนวงล้อ...</div>`;
-  }
+    if(question){
+      els.gameQuestionBanner.innerHTML = `
+        <div class="question-number">โจทย์ข้อที่ ${question.number}</div>
+        <div class="question-text">${escapeHtml(question.question_text)}</div>
+      `;
+    }else{
+      els.gameQuestionBanner.innerHTML = `<div class="question-text" style="font-size:1.05rem;color:var(--text-dim);">รอกรรมการหมุนวงล้อ...</div>`;
+    }
 
-  if(currentPlayer.role === 'judge'){
-    await renderJudgeGameActions(question);
-  }else{
-    await renderNormalGameActions(question);
+    if(currentPlayer.role === 'judge'){
+      await renderJudgeGameActions(question);
+    }else{
+      await renderNormalGameActions(question);
+    }
+  }catch(err){
+    // กันไม่ให้พังเงียบจนหน้าจอค้างไม่ขึ้นอะไรเลย — จะลองใหม่อัตโนมัติในรอบ poll ถัดไป (ทุก 5 วิ)
+    console.error('refreshGameView error', err);
   }
 }
 
@@ -1585,7 +1590,12 @@ function renderJudgeGameBoard(cells){
 
 // ---------- ผู้เล่นปกติ ----------
 async function renderNormalGameActions(question){
-  const { data: board } = await sb.from('boards').select('*').eq('player_id', currentPlayer.id).single();
+  const { data: board, error: boardErr } = await sb.from('boards').select('*').eq('player_id', currentPlayer.id).single();
+  if(boardErr || !board){
+    console.error('renderNormalGameActions: โหลดกระดานไม่สำเร็จ', boardErr);
+    els.gameActionArea.innerHTML = `<p style="text-align:center;color:var(--red-bright);font-size:0.85rem;">โหลดกระดานไม่สำเร็จ กำลังลองใหม่...</p>`;
+    return;
+  }
   myGameBoardRow = board;
   const isMyTurn = currentRoom.current_turn_player_id === currentPlayer.id;
 
