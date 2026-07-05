@@ -472,6 +472,7 @@
   .pass-btn{ background:transparent; border:1.5px solid var(--chrome-dim); color:var(--chrome); }
 
   .board-cell.marked{ background:rgba(224,168,56,0.18); border:1.5px solid var(--gold); }
+  .board-cell.duplicate{ background:rgba(200,30,44,0.22); border:2px solid var(--red-bright); box-shadow:0 0 0 2px rgba(200,30,44,0.3) inset; }
   .board-cell.selectable{ cursor:pointer; }
   .board-cell.selectable:hover{ border-color:var(--gold); background:rgba(255,255,255,0.08); }
 
@@ -1005,9 +1006,15 @@ function subscribeToRoom(){
 
   // Polling สำรอง เผื่อ Realtime ไม่ทำงาน (เช่นยังไม่ได้เปิด Replication ในโปรเจกต์)
   // เช็คสถานะห้องซ้ำทุก 5 วินาที จะได้ไม่ค้างรอถ้า realtime หลุด/ไม่ยิง event
+  // เช็คหน้าเกม (proposals/ตา) ด้วย เผื่อ realtime ของตาราง proposals ไม่ทำงาน
   if(roomPollInterval) clearInterval(roomPollInterval);
   roomPollInterval = setInterval(() => {
-    if(currentRoom) onRoomRowChanged();
+    if(!currentRoom) return;
+    onRoomRowChanged();
+    if(!els.game.classList.contains('hidden')){
+      refreshGameView();
+      refreshGameFeed();
+    }
   }, 5000);
 }
 
@@ -1023,12 +1030,12 @@ async function onRoomRowChanged(){
   const turnChanged = roomRow.current_turn_player_id !== currentRoom.current_turn_player_id;
   currentRoom = roomRow;
 
-  if(!els.lobby.classList.contains('hidden')){
-    await refreshPlayerList();
-    return;
-  }
   if(statusChanged){
     await routeToCurrentPhase();
+    return;
+  }
+  if(!els.lobby.classList.contains('hidden')){
+    await refreshPlayerList();
     return;
   }
   if(!els.game.classList.contains('hidden') && (questionChanged || turnChanged)){
@@ -1385,13 +1392,12 @@ async function renderJudgePhase(){
     els.btnSubmitBoard.classList.add('hidden');
     els.waitingOthers.classList.remove('hidden');
     els.waitingOthers.textContent = 'ใส่ตัวเลขครบแล้ว! รอผู้เล่นคนอื่นตั้งชื่อกันให้เสร็จ...';
-  }else{
-    updateJudgeSubmitState(cells);
   }
 }
 
 function renderJudgeBoard(cells, locked){
   els.boardGrid.innerHTML = '';
+  const cellDivs = [];
   cells.forEach((c, i) => {
     const div = document.createElement('div');
     div.className = 'board-cell editable' + (locked ? ' locked' : '');
@@ -1404,19 +1410,36 @@ function renderJudgeBoard(cells, locked){
     input.addEventListener('input', () => {
       const v = parseInt(input.value, 10);
       cells[i].number = isNaN(v) ? null : v;
-      updateJudgeSubmitState(cells);
+      updateJudgeSubmitState(cells, cellDivs);
     });
     div.appendChild(input);
+    cellDivs.push(div);
     els.boardGrid.appendChild(div);
   });
+  updateJudgeSubmitState(cells, cellDivs);
 }
 
-function updateJudgeSubmitState(cells){
+function updateJudgeSubmitState(cells, cellDivs){
+  // นับจำนวนแต่ละเลขที่กรอกไว้ เพื่อหาว่าเลขไหนซ้ำกันบ้าง
+  const counts = {};
+  cells.forEach(c => {
+    if(c.number !== null && c.number !== undefined){
+      counts[c.number] = (counts[c.number] || 0) + 1;
+    }
+  });
+
+  if(cellDivs){
+    cells.forEach((c, i) => {
+      const isDup = c.number !== null && c.number !== undefined && counts[c.number] > 1;
+      cellDivs[i].classList.toggle('duplicate', isDup);
+    });
+  }
+
   const filled = cells.filter(c => c.number !== null && c.number >= 1 && c.number <= 100);
   const uniqueVals = new Set(filled.map(c => c.number));
   const valid = filled.length === 25 && uniqueVals.size === 25;
   els.namingProgress.textContent = `ใส่แล้ว ${filled.length} / 25 ช่อง` +
-    (filled.length === 25 && !valid ? ' (มีเลขซ้ำ ต้องแก้ก่อน)' : '');
+    (uniqueVals.size < filled.length ? ' (มีเลขซ้ำ — ช่องกรอบแดงคือช่องที่ซ้ำ ต้องแก้ก่อน)' : '');
   els.btnSubmitBoard.disabled = !valid;
 }
 
