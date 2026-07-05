@@ -662,6 +662,7 @@ const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 let currentRoom = null;   // row จากตาราง rooms
 let currentPlayer = null; // row จากตาราง players (ตัวเราเอง)
 let playersChannel = null;
+let roomPollInterval = null;
 
 const els = {
   home: document.getElementById('view-home'),
@@ -751,6 +752,7 @@ async function leaveRoom(){
 
   try{
     if(playersChannel){ sb.removeChannel(playersChannel); playersChannel = null; }
+    stopRoomPolling();
 
     if(isHost && currentRoom.status === 'waiting'){
       // ห้องยังไม่เริ่มเกม + เป็นเจ้าของห้อง -> ลบห้องทิ้งเลย (cascade ลบผู้เล่น/wheel_state ไปด้วย)
@@ -1000,6 +1002,17 @@ function subscribeToRoom(){
       () => { if(!els.game.classList.contains('hidden')){ refreshGameView(); refreshGameFeed(); } }
     )
     .subscribe();
+
+  // Polling สำรอง เผื่อ Realtime ไม่ทำงาน (เช่นยังไม่ได้เปิด Replication ในโปรเจกต์)
+  // เช็คสถานะห้องซ้ำทุก 5 วินาที จะได้ไม่ค้างรอถ้า realtime หลุด/ไม่ยิง event
+  if(roomPollInterval) clearInterval(roomPollInterval);
+  roomPollInterval = setInterval(() => {
+    if(currentRoom) onRoomRowChanged();
+  }, 5000);
+}
+
+function stopRoomPolling(){
+  if(roomPollInterval){ clearInterval(roomPollInterval); roomPollInterval = null; }
 }
 
 async function onRoomRowChanged(){
@@ -1028,19 +1041,29 @@ els.btnStart.addEventListener('click', startGame);
 // =====================================================================
 // GAME START — สุ่มบทบาท + สร้างกระดาน
 // =====================================================================
+function withTimeout(promise, ms, label){
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error(`หมดเวลารอ (${label}) — เช็คว่า Supabase project ยัง Active อยู่ไหม หรือเน็ตหลุดไหม`)), ms))
+  ]);
+}
+
 async function startGame(){
   els.btnStart.disabled = true;
   els.lobbyStatus.textContent = 'กำลังสุ่มบทบาทและเตรียมกระดาน...';
   try{
     // กันกรณีห้องเริ่มเกมไปแล้ว (เช่นกดซ้ำ หรืออีก client เริ่มไปแล้ว)
-    const { data: roomCheck } = await sb.from('rooms').select('status').eq('id', currentRoom.id).single();
+    const { data: roomCheck } = await withTimeout(
+      sb.from('rooms').select('status').eq('id', currentRoom.id).single(), 15000, 'เช็คสถานะห้อง'
+    );
     if(roomCheck && roomCheck.status !== 'waiting'){
       await routeToCurrentPhase();
       return;
     }
 
-    const { data: players, error: playersErr } = await sb
-      .from('players').select('*').eq('room_id', currentRoom.id).order('joined_at');
+    const { data: players, error: playersErr } = await withTimeout(
+      sb.from('players').select('*').eq('room_id', currentRoom.id).order('joined_at'), 15000, 'โหลดรายชื่อผู้เล่น'
+    );
     if(playersErr) throw playersErr;
     if(players.length < currentRoom.min_players) throw new Error('ผู้เล่นไม่ครบ');
 
@@ -1049,15 +1072,18 @@ async function startGame(){
     const normals = shuffled.slice(1);
     const starCount = normals.length - 1;
 
-    // อัปเดต role + turn_order ให้ทุกคน
-    await sb.from('players').update({ role: 'judge', turn_order: null }).eq('id', judge.id);
-    for(let i=0;i<normals.length;i++){
-      await sb.from('players').update({ role: 'normal', turn_order: i+1 }).eq('id', normals[i].id);
-    }
+    // อัปเดต role + turn_order ให้ทุกคน (ยิงพร้อมกันทั้งหมด ไม่ต้องรอทีละคน)
+    els.lobbyStatus.textContent = 'กำลังแจกบทบาท...';
+    await withTimeout(Promise.all([
+      sb.from('players').update({ role: 'judge', turn_order: null }).eq('id', judge.id),
+      ...normals.map((p, i) => sb.from('players').update({ role: 'normal', turn_order: i + 1 }).eq('id', p.id)),
+    ]), 15000, 'แจกบทบาท');
 
-    // สร้างกระดานผู้เล่นปกติแต่ละคน (25 ช่อง, สุ่มตำแหน่งช่อง * ตามจำนวน = คนอื่น - 1... คือ normals.length - 1)
+    // สร้างกระดานผู้เล่นปกติแต่ละคน (25 ช่อง, สุ่มตำแหน่งช่อง * ตามจำนวน = คนอื่น - 1)
     // ใช้ upsert (ไม่ใช่ insert) เผื่อเป็นการกดเริ่มซ้ำ/retry หลังพังกลางทาง จะได้ไม่ชน unique constraint
-    for(const p of normals){
+    // ยิงพร้อมกันทั้งหมดแทนที่จะวนทีละคน จะได้ไม่ค้างนาน
+    els.lobbyStatus.textContent = 'กำลังสร้างกระดาน...';
+    const boardResults = await withTimeout(Promise.all(normals.map(p => {
       const starIndexes = new Set(shuffle([...Array(25).keys()]).slice(0, starCount));
       const cells = Array.from({length:25}, (_,i) => ({
         index: i,
@@ -1066,29 +1092,33 @@ async function startGame(){
         is_marked: false,
         filled_by_player_id: null,
       }));
-      const { error: boardErr } = await sb
-        .from('boards')
-        .upsert({ player_id: p.id, cells }, { onConflict: 'player_id' });
-      if(boardErr) throw boardErr;
-    }
+      return sb.from('boards').upsert({ player_id: p.id, cells }, { onConflict: 'player_id' });
+    })), 20000, 'สร้างกระดานผู้เล่น');
+    const boardFail = boardResults.find(r => r.error);
+    if(boardFail) throw boardFail.error;
 
     // สร้างกระดานกรรมการ (ว่างไว้ให้กรรมการกรอกตัวเลขเอง)
     const judgeCells = Array.from({length:25}, (_,i) => ({ index: i, number: null, is_marked: false }));
-    const { error: judgeErr } = await sb
-      .from('judge_boards')
-      .upsert({ player_id: judge.id, cells: judgeCells }, { onConflict: 'player_id' });
+    const { error: judgeErr } = await withTimeout(
+      sb.from('judge_boards').upsert({ player_id: judge.id, cells: judgeCells }, { onConflict: 'player_id' }),
+      15000, 'สร้างกระดานกรรมการ'
+    );
     if(judgeErr) throw judgeErr;
 
-    await sb.from('game_log').insert({
-      room_id: currentRoom.id, event_type: 'role_assigned',
-      payload: { judge_id: judge.id, judge_nickname: judge.nickname }
-    });
-    await sb.from('game_log').insert({
-      room_id: currentRoom.id, event_type: 'board_generated',
-      payload: { normal_count: normals.length, star_count: starCount }
-    });
+    await withTimeout(Promise.all([
+      sb.from('game_log').insert({
+        room_id: currentRoom.id, event_type: 'role_assigned',
+        payload: { judge_id: judge.id, judge_nickname: judge.nickname }
+      }),
+      sb.from('game_log').insert({
+        room_id: currentRoom.id, event_type: 'board_generated',
+        payload: { normal_count: normals.length, star_count: starCount }
+      }),
+    ]), 15000, 'บันทึก log');
 
-    const { error: statusErr } = await sb.from('rooms').update({ status: 'naming_self' }).eq('id', currentRoom.id);
+    const { error: statusErr } = await withTimeout(
+      sb.from('rooms').update({ status: 'naming_self' }).eq('id', currentRoom.id), 15000, 'เปลี่ยนสถานะห้อง'
+    );
     if(statusErr) throw statusErr;
   }catch(err){
     console.error(err);
