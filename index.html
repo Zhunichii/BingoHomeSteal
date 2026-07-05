@@ -125,6 +125,28 @@
     text-align:center;
   }
 
+  select{
+    width:100%;
+    background:rgba(255,255,255,0.05);
+    border:1px solid var(--panel-line);
+    border-radius:10px;
+    padding:14px 16px;
+    color:var(--text);
+    font-family:'Work Sans', sans-serif;
+    font-size:1rem;
+    margin-bottom:18px;
+    outline:none;
+    transition:0.15s;
+    appearance:none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23b8afa6' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+    background-repeat:no-repeat;
+    background-position:right 14px center;
+    background-size:18px;
+    cursor:pointer;
+  }
+  select:focus{ border-color:var(--gold); background-color:rgba(255,255,255,0.08); }
+  select option{ background:var(--panel); color:var(--text); }
+
   .btn{
     width:100%;
     padding:15px;
@@ -533,6 +555,8 @@
         <p class="pane-sub">ตั้งชื่อของคุณ แล้วเป็นเจ้าของห้อง แจกรหัสให้เพื่อนเข้ามาเล่นด้วยกัน (ต้องมีผู้เล่นอย่างน้อย 3 คน)</p>
         <label for="create-nickname">ชื่อเล่นของคุณ</label>
         <input type="text" id="create-nickname" maxlength="20" placeholder="เช่น ปอนด์">
+        <label for="create-theme">เลือกธีมโจทย์</label>
+        <select id="create-theme"><option value="">กำลังโหลดธีม...</option></select>
         <div class="field-error" id="create-error"></div>
         <button class="btn btn-primary" id="btn-create">สร้างห้อง</button>
       </div>
@@ -643,6 +667,7 @@ const els = {
   home: document.getElementById('view-home'),
   lobby: document.getElementById('view-lobby'),
   createNickname: document.getElementById('create-nickname'),
+  createTheme: document.getElementById('create-theme'),
   createError: document.getElementById('create-error'),
   btnCreate: document.getElementById('btn-create'),
   joinCode: document.getElementById('join-code'),
@@ -764,21 +789,47 @@ function shuffle(arr){
 }
 
 // ---------------------------------------------------------------------
+// โหลดรายการธีมมาใส่ dropdown ตอนสร้างห้อง
+// ---------------------------------------------------------------------
+async function loadThemes(){
+  try{
+    const { data: themes, error } = await sb
+      .from('themes').select('id, name, is_default')
+      .order('is_default', { ascending: false })
+      .order('name', { ascending: true });
+    if(error) throw error;
+
+    if(!themes || !themes.length){
+      els.createTheme.innerHTML = '<option value="">ยังไม่มีธีมในระบบ</option>';
+      return;
+    }
+
+    els.createTheme.innerHTML = themes.map(t =>
+      `<option value="${t.id}">${escapeHtml(t.name)}${t.is_default ? ' (ค่าเริ่มต้น)' : ''}</option>`
+    ).join('');
+  }catch(err){
+    console.error('loadThemes error', err);
+    els.createTheme.innerHTML = '<option value="">โหลดธีมไม่สำเร็จ ลองรีเฟรชหน้า</option>';
+  }
+}
+loadThemes();
+
+// ---------------------------------------------------------------------
 // CREATE ROOM
 // ---------------------------------------------------------------------
 els.btnCreate.addEventListener('click', async () => {
   const nickname = els.createNickname.value.trim();
+  const themeId = els.createTheme.value;
   els.createError.textContent = '';
   if(!nickname){ els.createError.textContent = 'กรุณาใส่ชื่อเล่นก่อนนะ'; return; }
+  if(!themeId){ els.createError.textContent = 'กรุณาเลือกธีมโจทย์ก่อนนะ'; return; }
 
   els.btnCreate.disabled = true;
   els.btnCreate.textContent = 'กำลังสร้างห้อง...';
 
   try{
-    // 1) หาธีมเริ่มต้น
-    const { data: theme, error: themeErr } = await sb
-      .from('themes').select('id').eq('is_default', true).limit(1).single();
-    if(themeErr) throw themeErr;
+    // 1) ใช้ธีมที่เลือกไว้จาก dropdown
+    const theme = { id: themeId };
 
     // 2) สุ่ม room code ที่ไม่ซ้ำ (ลองสูงสุด 5 ครั้ง)
     let room = null;
