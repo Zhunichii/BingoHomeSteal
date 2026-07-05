@@ -1032,6 +1032,13 @@ async function startGame(){
   els.btnStart.disabled = true;
   els.lobbyStatus.textContent = 'กำลังสุ่มบทบาทและเตรียมกระดาน...';
   try{
+    // กันกรณีห้องเริ่มเกมไปแล้ว (เช่นกดซ้ำ หรืออีก client เริ่มไปแล้ว)
+    const { data: roomCheck } = await sb.from('rooms').select('status').eq('id', currentRoom.id).single();
+    if(roomCheck && roomCheck.status !== 'waiting'){
+      await routeToCurrentPhase();
+      return;
+    }
+
     const { data: players, error: playersErr } = await sb
       .from('players').select('*').eq('room_id', currentRoom.id).order('joined_at');
     if(playersErr) throw playersErr;
@@ -1049,6 +1056,7 @@ async function startGame(){
     }
 
     // สร้างกระดานผู้เล่นปกติแต่ละคน (25 ช่อง, สุ่มตำแหน่งช่อง * ตามจำนวน = คนอื่น - 1... คือ normals.length - 1)
+    // ใช้ upsert (ไม่ใช่ insert) เผื่อเป็นการกดเริ่มซ้ำ/retry หลังพังกลางทาง จะได้ไม่ชน unique constraint
     for(const p of normals){
       const starIndexes = new Set(shuffle([...Array(25).keys()]).slice(0, starCount));
       const cells = Array.from({length:25}, (_,i) => ({
@@ -1058,13 +1066,17 @@ async function startGame(){
         is_marked: false,
         filled_by_player_id: null,
       }));
-      const { error: boardErr } = await sb.from('boards').insert({ player_id: p.id, cells });
+      const { error: boardErr } = await sb
+        .from('boards')
+        .upsert({ player_id: p.id, cells }, { onConflict: 'player_id' });
       if(boardErr) throw boardErr;
     }
 
     // สร้างกระดานกรรมการ (ว่างไว้ให้กรรมการกรอกตัวเลขเอง)
     const judgeCells = Array.from({length:25}, (_,i) => ({ index: i, number: null, is_marked: false }));
-    const { error: judgeErr } = await sb.from('judge_boards').insert({ player_id: judge.id, cells: judgeCells });
+    const { error: judgeErr } = await sb
+      .from('judge_boards')
+      .upsert({ player_id: judge.id, cells: judgeCells }, { onConflict: 'player_id' });
     if(judgeErr) throw judgeErr;
 
     await sb.from('game_log').insert({
