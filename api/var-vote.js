@@ -10,13 +10,12 @@
 // วิธีตั้งค่า (Vercel Dashboard > โปรเจกต์ > Settings > Environment Variables):
 //   GEMINI_API_KEY      = API key จาก https://aistudio.google.com/apikey
 //   OPENAI_API_KEY      = API key จาก https://platform.openai.com/api-keys
-//   DASHSCOPE_API_KEY   = API key ของ Qwen จาก https://bailian.console.aliyun.com (Alibaba Cloud Model Studio)
+//   GROQ_API_KEY        = API key จาก https://console.groq.com (สมัครแค่อีเมล ไม่ต้อง credit card)
 //
 // ตั้งค่าเสริม (ไม่ตั้งก็ได้ มีค่า default ให้แล้ว):
 //   GEMINI_MODEL    (default: gemini-2.5-flash)
 //   OPENAI_MODEL    (default: gpt-4o-mini)
-//   QWEN_MODEL      (default: qwen-plus)
-//   QWEN_BASE_URL   (default: https://dashscope-intl.aliyuncs.com/compatible-mode/v1)
+//   GROQ_MODEL      (default: openai/gpt-oss-20b)
 //
 // หมายเหตุ: ชื่อโมเดลของแต่ละเจ้าเปลี่ยนได้เรื่อยๆ ตามเวลา ถ้าเจอ error ว่าโมเดล
 // ไม่มีอยู่ ให้เข้าไปเช็ครุ่นล่าสุดจากเอกสารของแต่ละเจ้า แล้วตั้งผ่าน environment
@@ -97,26 +96,26 @@ async function askOpenAI(prompt) {
   }
 }
 
-async function askQwen(prompt) {
-  const apiKey = process.env.DASHSCOPE_API_KEY;
-  if (!apiKey) return { name: 'qwen', error: 'ไม่ได้ตั้งค่า DASHSCOPE_API_KEY' };
-  const model = process.env.QWEN_MODEL || 'qwen-plus';
-  const baseUrl = process.env.QWEN_BASE_URL || 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1';
+async function askGroq(prompt) {
+  const apiKey = process.env.GROQ_API_KEY;
+  if (!apiKey) return { name: 'groq', error: 'ไม่ได้ตั้งค่า GROQ_API_KEY' };
+  const model = process.env.GROQ_MODEL || 'openai/gpt-oss-20b';
   try {
-    const r = await fetch(`${baseUrl}/chat/completions`, {
+    const r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
       body: JSON.stringify({
         model,
         messages: [{ role: 'user', content: prompt }],
+        response_format: { type: 'json_object' },
       }),
     });
     const data = await r.json();
-    if (!r.ok) throw new Error((data.error && data.error.message) || `Qwen HTTP ${r.status}`);
+    if (!r.ok) throw new Error((data.error && data.error.message) || `Groq HTTP ${r.status}`);
     const text = data.choices?.[0]?.message?.content || '';
-    return { name: 'qwen', ...parseVerdictText(text) };
+    return { name: 'groq', ...parseVerdictText(text) };
   } catch (err) {
-    return { name: 'qwen', error: err.message };
+    return { name: 'groq', error: err.message };
   }
 }
 
@@ -134,13 +133,13 @@ module.exports = async function handler(req, res) {
 
   const prompt = buildPrompt(questionText, proposedName);
 
-  const [gemini, chatgpt, qwen] = await Promise.all([
+  const [gemini, chatgpt, groq] = await Promise.all([
     askGemini(prompt),
     askOpenAI(prompt),
-    askQwen(prompt),
+    askGroq(prompt),
   ]);
 
-  const votes = [gemini, chatgpt, qwen];
+  const votes = [gemini, chatgpt, groq];
   const validVotes = votes.filter(v => typeof v.verdict === 'boolean');
   const yesCount = validVotes.filter(v => v.verdict).length;
   const noCount = validVotes.length - yesCount;
