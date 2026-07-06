@@ -2132,9 +2132,9 @@ function formatFeedItem(l){
     case 'var_result': {
       const voteText = (l.payload.votes || []).map(v => {
         const label = { gemini: 'Gemini', chatgpt: 'ChatGPT', groq: 'Groq' }[v.name] || v.name;
-        if(v.error) return `${label}: ไม่ตอบสนอง`;
+        if(v.error) return `${label}: ⚠️ ${escapeHtml(v.error)}`;
         return `${label}: ${v.verdict ? '✅' : '❌'}`;
-      }).join(' | ');
+      }).join('<br>');
       return `🎥 ผล VAR "${escapeHtml(l.payload.proposed_name || '')}": <b>${l.payload.finalVerdict ? 'ผ่าน ✅' : 'ไม่ผ่าน ❌'}</b><br><span style="font-size:0.72rem;">${voteText}</span>`;
     }
     case 'bingo_achieved': return `🎉 กรรมการบิงโกแล้ว!`;

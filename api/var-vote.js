@@ -88,7 +88,15 @@ async function askOpenAI(prompt) {
       }),
     });
     const data = await r.json();
-    if (!r.ok) throw new Error((data.error && data.error.message) || `OpenAI HTTP ${r.status}`);
+    if (!r.ok) {
+      const code = data.error && data.error.code;
+      const msg = data.error && data.error.message;
+      if (code === 'insufficient_quota') throw new Error('บัญชี OpenAI ไม่มี credit เหลือ (ต้องเติมเงินก่อน)');
+      if (code === 'invalid_api_key' || r.status === 401) throw new Error('OPENAI_API_KEY ไม่ถูกต้อง');
+      if (code === 'model_not_found') throw new Error(`ไม่พบโมเดล "${model}" ในบัญชีนี้`);
+      if (r.status === 429) throw new Error('OpenAI จำกัดจำนวนคำขอ (rate limit) ลองใหม่อีกครั้ง');
+      throw new Error(msg || `OpenAI HTTP ${r.status}`);
+    }
     const text = data.choices?.[0]?.message?.content || '';
     return { name: 'chatgpt', ...parseVerdictText(text) };
   } catch (err) {
