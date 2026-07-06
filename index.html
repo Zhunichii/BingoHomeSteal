@@ -2131,7 +2131,7 @@ function formatFeedItem(l){
     case 'var_requested': return `🎥 มีการขอ VAR ตัดสิน "${escapeHtml(l.payload.proposed_name || '')}"`;
     case 'var_result': {
       const voteText = (l.payload.votes || []).map(v => {
-        const label = { gemini: 'Gemini', chatgpt: 'ChatGPT', groq: 'Groq' }[v.name] || v.name;
+        const label = { gemini: 'Gemini', openrouter: 'OpenRouter', groq: 'Groq' }[v.name] || v.name;
         if(v.error) return `${label}: ⚠️ ${escapeHtml(v.error)}`;
         return `${label}: ${v.verdict ? '✅' : '❌'}`;
       }).join('<br>');

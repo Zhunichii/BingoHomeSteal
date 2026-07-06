@@ -11,15 +11,17 @@
 //   GEMINI_API_KEY      = API key จาก https://aistudio.google.com/apikey
 //   OPENAI_API_KEY      = API key จาก https://platform.openai.com/api-keys
 //   GROQ_API_KEY        = API key จาก https://console.groq.com (สมัครแค่อีเมล ไม่ต้อง credit card)
+//   OPENROUTER_API_KEY  = API key จาก https://openrouter.ai/keys (สมัครแค่อีเมล ไม่ต้อง credit card ใช้โมเดลฟรี)
 //
 // ตั้งค่าเสริม (ไม่ตั้งก็ได้ มีค่า default ให้แล้ว):
-//   GEMINI_MODEL    (default: gemini-2.5-flash)
-//   OPENAI_MODEL    (default: gpt-4o-mini)
-//   GROQ_MODEL      (default: openai/gpt-oss-20b)
+//   GEMINI_MODEL      (default: gemini-2.5-flash)
+//   OPENROUTER_MODEL  (default: openrouter/free — router เลือกโมเดลฟรีให้อัตโนมัติ)
+//   GROQ_MODEL        (default: openai/gpt-oss-20b)
 //
 // หมายเหตุ: ชื่อโมเดลของแต่ละเจ้าเปลี่ยนได้เรื่อยๆ ตามเวลา ถ้าเจอ error ว่าโมเดล
 // ไม่มีอยู่ ให้เข้าไปเช็ครุ่นล่าสุดจากเอกสารของแต่ละเจ้า แล้วตั้งผ่าน environment
 // variable ด้านบนแทนการแก้โค้ด
+// หมายเหตุ OpenRouter: โมเดลฟรีจำกัด ~20 คำขอ/นาที และ ~200 คำขอ/วัน เพียงพอสำหรับเกมนี้
 // =====================================================================
 
 function buildPrompt(questionText, proposedName) {
@@ -73,14 +75,17 @@ async function askGemini(prompt) {
   }
 }
 
-async function askOpenAI(prompt) {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) return { name: 'chatgpt', error: 'ไม่ได้ตั้งค่า OPENAI_API_KEY' };
-  const model = process.env.OPENAI_MODEL || 'gpt-4o-mini';
+async function askOpenRouter(prompt) {
+  const apiKey = process.env.OPENROUTER_API_KEY;
+  if (!apiKey) return { name: 'openrouter', error: 'ไม่ได้ตั้งค่า OPENROUTER_API_KEY' };
+  const model = process.env.OPENROUTER_MODEL || 'openrouter/free';
   try {
-    const r = await fetch('https://api.openai.com/v1/chat/completions', {
+    const r = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+      },
       body: JSON.stringify({
         model,
         messages: [{ role: 'user', content: prompt }],
@@ -89,18 +94,15 @@ async function askOpenAI(prompt) {
     });
     const data = await r.json();
     if (!r.ok) {
-      const code = data.error && data.error.code;
-      const msg = data.error && data.error.message;
-      if (code === 'insufficient_quota') throw new Error('บัญชี OpenAI ไม่มี credit เหลือ (ต้องเติมเงินก่อน)');
-      if (code === 'invalid_api_key' || r.status === 401) throw new Error('OPENAI_API_KEY ไม่ถูกต้อง');
-      if (code === 'model_not_found') throw new Error(`ไม่พบโมเดล "${model}" ในบัญชีนี้`);
-      if (r.status === 429) throw new Error('OpenAI จำกัดจำนวนคำขอ (rate limit) ลองใหม่อีกครั้ง');
-      throw new Error(msg || `OpenAI HTTP ${r.status}`);
+      const msg = data.error && (data.error.message || data.error.code);
+      if (r.status === 401) throw new Error('OPENROUTER_API_KEY ไม่ถูกต้อง');
+      if (r.status === 429) throw new Error('OpenRouter จำกัดจำนวนคำขอ (โมเดลฟรีจำกัด ~20/นาที, ~200/วัน)');
+      throw new Error(msg || `OpenRouter HTTP ${r.status}`);
     }
     const text = data.choices?.[0]?.message?.content || '';
-    return { name: 'chatgpt', ...parseVerdictText(text) };
+    return { name: 'openrouter', ...parseVerdictText(text) };
   } catch (err) {
-    return { name: 'chatgpt', error: err.message };
+    return { name: 'openrouter', error: err.message };
   }
 }
 
@@ -141,13 +143,13 @@ module.exports = async function handler(req, res) {
 
   const prompt = buildPrompt(questionText, proposedName);
 
-  const [gemini, chatgpt, groq] = await Promise.all([
+  const [gemini, openrouter, groq] = await Promise.all([
     askGemini(prompt),
-    askOpenAI(prompt),
+    askOpenRouter(prompt),
     askGroq(prompt),
   ]);
 
-  const votes = [gemini, chatgpt, groq];
+  const votes = [gemini, openrouter, groq];
   const validVotes = votes.filter(v => typeof v.verdict === 'boolean');
   const yesCount = validVotes.filter(v => v.verdict).length;
   const noCount = validVotes.length - yesCount;
