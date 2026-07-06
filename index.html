@@ -530,7 +530,10 @@
 
   @media (max-width: 820px){
     .game-layout{ flex-direction:column; }
-    .game-sidebar{ width:100%; flex:none; position:static; }
+    .game-main{ width:100%; }
+    /* ให้กระดานในหน้าเกมขยายเต็มความกว้างบนมือถือ/ไอแพด (ไม่ถูกจำกัด max-width เหมือนตอน naming) */
+    #view-game .board-grid{ max-width:none; width:100%; }
+    .game-sidebar{ width:100%; flex:none; position:static; order:2; }
     .sidebar-player-list{ flex-direction:row; flex-wrap:wrap; }
     .sidebar-player-row{ flex:1 1 140px; }
   }
@@ -580,7 +583,7 @@
   }
 
   @media (max-width: 680px){
-    .board-grid{ max-width:420px; gap:6px; }
+    #view-naming .board-grid{ max-width:420px; gap:6px; }
     .naming-title{ font-size:1.4rem; }
     .naming-wrap{ padding:30px 22px; }
   }
@@ -591,15 +594,18 @@
     .pane{ padding:26px 20px; }
     .pane-eyebrow{ font-size:2rem; }
     .naming-wrap{ padding:24px 16px; }
-    .board-grid{ max-width:340px; gap:5px; margin:20px auto; }
+    #view-naming .board-grid{ max-width:340px; gap:5px; margin:20px auto; }
+    #view-game .board-grid{ gap:5px; }
     .lobby{ padding:28px 22px; }
     .room-code{ font-size:1.7rem; letter-spacing:5px; }
     .question-text{ font-size:1.2rem; }
     .verdict-box{ padding:16px; }
+    .game-main{ padding:22px 14px; }
   }
 
   @media (max-width: 360px){
-    .board-grid{ max-width:300px; gap:4px; }
+    #view-naming .board-grid{ max-width:300px; gap:4px; }
+    #view-game .board-grid{ gap:4px; }
   }
 </style>
 </head>
