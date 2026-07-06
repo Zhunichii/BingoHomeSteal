@@ -1654,10 +1654,15 @@ async function renderJudgeGameActions(question){
     return;
   }
 
-  const { data: pendingList } = await sb
-    .from('proposals').select('*, players!inner(nickname)')
+  const { data: pendingList, error: pendingErr } = await sb
+    .from('proposals').select('*, players!player_id!inner(nickname)')
     .eq('room_id', currentRoom.id).eq('question_id', question.id).in('status', ['pending', 'var_pending'])
     .limit(1);
+  if(pendingErr){
+    console.error('judge pending query error', pendingErr);
+    els.gameActionArea.innerHTML = `<p style="text-align:center;color:var(--red-bright);font-size:0.8rem;">โหลดข้อเสนอไม่สำเร็จ: ${escapeHtml(pendingErr.message || '')}</p>`;
+    return;
+  }
 
   if(pendingList && pendingList.length){
     const p = pendingList[0];
@@ -1719,9 +1724,15 @@ async function renderNormalGameActions(question){
     return;
   }
 
-  const { data: questionProposals } = await sb
-    .from('proposals').select('*, players!inner(nickname)')
+  const { data: questionProposals, error: propErr } = await sb
+    .from('proposals').select('*, players!player_id!inner(nickname)')
     .eq('room_id', currentRoom.id).eq('question_id', question.id);
+  if(propErr){
+    console.error('normal proposals query error', propErr);
+    els.gameActionArea.innerHTML = `<p style="text-align:center;color:var(--red-bright);font-size:0.8rem;">โหลดข้อเสนอไม่สำเร็จ: ${escapeHtml(propErr.message || '')}</p>`;
+    renderNormalGameBoard(board.cells, false);
+    return;
+  }
   const list = questionProposals || [];
   const pending = list.find(p => p.status === 'pending' || p.status === 'var_pending');
   const myRow = list.find(p => p.player_id === currentPlayer.id);
