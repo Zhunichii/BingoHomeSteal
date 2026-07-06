@@ -473,6 +473,67 @@
 
   .board-cell.marked{ background:rgba(224,168,56,0.18); border:1.5px solid var(--gold); }
   .board-cell.duplicate{ background:rgba(200,30,44,0.22); border:2px solid var(--red-bright); box-shadow:0 0 0 2px rgba(200,30,44,0.3) inset; }
+
+  /* ---------- Game layout with roster sidebar ---------- */
+  .game-layout{
+    display:flex;
+    gap:14px;
+    align-items:flex-start;
+    width:100%;
+  }
+  .game-main{ flex:1 1 auto; min-width:0; }
+  .game-sidebar{
+    flex:0 0 180px;
+    background:var(--panel);
+    border:1px solid var(--panel-line);
+    border-radius:16px;
+    padding:20px 14px;
+    position:sticky;
+    top:20px;
+  }
+  .sidebar-title{
+    font-size:0.66rem;
+    text-transform:uppercase;
+    letter-spacing:2px;
+    color:var(--text-dim);
+    margin-bottom:12px;
+  }
+  .sidebar-player-list{ list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:8px; }
+  .sidebar-player-row{
+    display:flex;
+    align-items:center;
+    flex-wrap:wrap;
+    gap:6px;
+    padding:8px 10px;
+    border-radius:8px;
+    background:rgba(255,255,255,0.03);
+    border:1px solid transparent;
+    font-size:0.78rem;
+  }
+  .sidebar-player-row.is-turn{
+    border-color:var(--gold);
+    background:rgba(224,168,56,0.1);
+  }
+  .sidebar-player-name{ word-break:break-word; }
+  .sidebar-role-tag{
+    margin-left:auto;
+    font-family:'DM Mono', monospace;
+    font-size:0.58rem;
+    letter-spacing:0.5px;
+    text-transform:uppercase;
+    padding:2px 6px;
+    border-radius:100px;
+    white-space:nowrap;
+  }
+  .sidebar-role-tag.judge{ background:rgba(224,168,56,0.15); color:var(--gold); border:1px solid var(--gold); }
+  .sidebar-role-tag.normal{ background:rgba(200,30,44,0.15); color:var(--red-bright); border:1px solid var(--red); }
+
+  @media (max-width: 820px){
+    .game-layout{ flex-direction:column; }
+    .game-sidebar{ width:100%; flex:none; position:static; }
+    .sidebar-player-list{ flex-direction:row; flex-wrap:wrap; }
+    .sidebar-player-row{ flex:1 1 140px; }
+  }
   .board-cell.selectable{ cursor:pointer; }
   .board-cell.selectable:hover{ border-color:var(--gold); background:rgba(255,255,255,0.08); }
 
@@ -613,26 +674,33 @@
     </div>
 
     <!-- ============ GAME (หมุนวงล้อ / เสนอชื่อ / ตัดสิน) ============ -->
-    <div id="view-game" class="naming-wrap hidden">
-      <div class="lobby-head" style="margin-bottom:18px;">
-        <div>
-          <div class="room-code-label">ห้อง</div>
-          <div class="room-code" style="font-size:1.3rem;letter-spacing:4px;" id="game-room-code">------</div>
+    <div id="view-game" class="game-layout hidden">
+      <div class="naming-wrap game-main">
+        <div class="lobby-head" style="margin-bottom:18px;">
+          <div>
+            <div class="room-code-label">ห้อง</div>
+            <div class="room-code" style="font-size:1.3rem;letter-spacing:4px;" id="game-room-code">------</div>
+          </div>
+          <div class="copy-hint" id="game-wheel-progress" style="cursor:default;text-decoration:none;">หมุนไปแล้ว 0/100</div>
         </div>
-        <div class="copy-hint" id="game-wheel-progress" style="cursor:default;text-decoration:none;">หมุนไปแล้ว 0/100</div>
+
+        <div id="game-question-banner" class="question-banner"></div>
+        <div id="game-turn-indicator" class="turn-indicator"></div>
+        <div id="game-action-area"></div>
+        <div class="board-grid" id="game-board-grid"></div>
+
+        <div class="game-feed">
+          <div class="game-feed-title">ความเคลื่อนไหวในเกม</div>
+          <div id="game-feed-list"></div>
+        </div>
+
+        <p class="leave-link" id="btn-leave-game">ออกจากห้อง</p>
       </div>
 
-      <div id="game-question-banner" class="question-banner"></div>
-      <div id="game-turn-indicator" class="turn-indicator"></div>
-      <div id="game-action-area"></div>
-      <div class="board-grid" id="game-board-grid"></div>
-
-      <div class="game-feed">
-        <div class="game-feed-title">ความเคลื่อนไหวในเกม</div>
-        <div id="game-feed-list"></div>
-      </div>
-
-      <p class="leave-link" id="btn-leave-game">ออกจากห้อง</p>
+      <aside class="game-sidebar">
+        <div class="sidebar-title">ผู้เล่นในห้อง</div>
+        <ul class="sidebar-player-list" id="game-player-list"></ul>
+      </aside>
     </div>
 
     <!-- ============ RESULTS (จบเกม) ============ -->
@@ -702,6 +770,7 @@ const els = {
   gameActionArea: document.getElementById('game-action-area'),
   gameBoardGrid: document.getElementById('game-board-grid'),
   gameFeedList: document.getElementById('game-feed-list'),
+  gamePlayerList: document.getElementById('game-player-list'),
   btnLeaveGame: document.getElementById('btn-leave-game'),
   results: document.getElementById('view-results'),
   resultsSub: document.getElementById('results-sub'),
@@ -1477,6 +1546,7 @@ els.btnSubmitBoard.addEventListener('click', async () => {
 // GAME PHASE — หมุนวงล้อ / เสนอชื่อ / ตัดสิน / จบเกม
 // =====================================================================
 let gameNormalPlayers = [];
+let gameAllPlayers = [];
 let myGameBoardRow = null;
 let myGameJudgeBoardRow = null;
 
@@ -1489,15 +1559,47 @@ async function enterGamePhase(){
   const { data: roomRow } = await sb.from('rooms').select('*').eq('id', currentRoom.id).single();
   if(roomRow) currentRoom = roomRow;
 
-  const { data: normals } = await sb
-    .from('players').select('*').eq('room_id', currentRoom.id).eq('role', 'normal').order('turn_order');
-  gameNormalPlayers = normals || [];
+  const { data: allPlayers } = await sb
+    .from('players').select('*').eq('room_id', currentRoom.id).order('joined_at');
+  gameAllPlayers = allPlayers || [];
+  gameNormalPlayers = gameAllPlayers
+    .filter(p => p.role === 'normal')
+    .sort((a, b) => (a.turn_order || 0) - (b.turn_order || 0));
 
+  renderGameSidebar();
   await refreshGameView();
   await refreshGameFeed();
 }
 
+function renderGameSidebar(){
+  if(!els.gamePlayerList) return;
+  els.gamePlayerList.innerHTML = gameAllPlayers.map(p => {
+    const isMe = p.id === currentPlayer.id;
+    const isTurn = p.role === 'normal' && currentRoom && p.id === currentRoom.current_turn_player_id;
+    const roleTag = p.role === 'judge'
+      ? '<span class="sidebar-role-tag judge">กรรมการ</span>'
+      : '<span class="sidebar-role-tag normal">ผู้เล่น</span>';
+    return `
+      <li class="sidebar-player-row${isTurn ? ' is-turn' : ''}">
+        <span class="player-dot"></span>
+        <span class="sidebar-player-name">${escapeHtml(p.nickname)}${isMe ? ' (คุณ)' : ''}</span>
+        ${roleTag}
+      </li>`;
+  }).join('');
+}
+
+let gameViewRefreshing = false;
+let gameViewRefreshQueued = false;
+
 async function refreshGameView(){
+  // กันเรียกซ้อนกัน (เช่น polling ทุก 5 วิ ชนกับตอนผู้เล่นกดเสนอชื่อพอดี)
+  // ถ้ากำลังรันอยู่แล้ว ให้แค่จดไว้ว่าต้องรันซ้ำอีกครั้งหลังจบรอบนี้ แทนที่จะปล่อยให้วิ่งพร้อมกัน
+  // ซึ่งอาจทำให้ผลลัพธ์ที่เก่ากว่าไปเขียนทับผลลัพธ์ที่ใหม่กว่า (race condition)
+  if(gameViewRefreshing){
+    gameViewRefreshQueued = true;
+    return;
+  }
+  gameViewRefreshing = true;
   try{
     const { data: wheel } = await sb.from('wheel_state').select('*').eq('room_id', currentRoom.id).single();
     const drawnCount = wheel ? wheel.drawn_numbers.length : 0;
@@ -1518,6 +1620,8 @@ async function refreshGameView(){
       els.gameQuestionBanner.innerHTML = `<div class="question-text" style="font-size:1.05rem;color:var(--text-dim);">รอกรรมการหมุนวงล้อ...</div>`;
     }
 
+    renderGameSidebar();
+
     if(currentPlayer.role === 'judge'){
       await renderJudgeGameActions(question);
     }else{
@@ -1526,6 +1630,12 @@ async function refreshGameView(){
   }catch(err){
     // กันไม่ให้พังเงียบจนหน้าจอค้างไม่ขึ้นอะไรเลย — จะลองใหม่อัตโนมัติในรอบ poll ถัดไป (ทุก 5 วิ)
     console.error('refreshGameView error', err);
+  }finally{
+    gameViewRefreshing = false;
+    if(gameViewRefreshQueued){
+      gameViewRefreshQueued = false;
+      refreshGameView(); // มีการเปลี่ยนแปลงเข้ามาระหว่างที่กำลังรันอยู่ รันซ้ำอีกทีให้ทันข้อมูลล่าสุด
+    }
   }
 }
 
@@ -1609,13 +1719,15 @@ async function renderNormalGameActions(question){
     return;
   }
 
-  const { data: pendingList } = await sb
+  const { data: questionProposals } = await sb
     .from('proposals').select('*, players!inner(nickname)')
-    .eq('room_id', currentRoom.id).eq('question_id', question.id).in('status', ['pending', 'var_pending'])
-    .limit(1);
+    .eq('room_id', currentRoom.id).eq('question_id', question.id);
+  const list = questionProposals || [];
+  const pending = list.find(p => p.status === 'pending' || p.status === 'var_pending');
+  const myRow = list.find(p => p.player_id === currentPlayer.id);
 
-  if(pendingList && pendingList.length){
-    const p = pendingList[0];
+  if(pending){
+    const p = pending;
     const isMine = p.player_id === currentPlayer.id;
 
     if(p.status === 'var_pending'){
@@ -1638,10 +1750,7 @@ async function renderNormalGameActions(question){
   }
 
   if(isMyTurn){
-    const { data: myPast } = await sb
-      .from('proposals').select('id').eq('room_id', currentRoom.id)
-      .eq('question_id', question.id).eq('player_id', currentPlayer.id).limit(1);
-    if(myPast && myPast.length){
+    if(myRow){
       els.gameActionArea.innerHTML = `<p style="text-align:center;color:var(--text-dim);font-size:0.85rem;">คุณตอบไปแล้วในโจทย์นี้ รอเพื่อนคนอื่น...</p>`;
       renderNormalGameBoard(board.cells, false);
       return;
